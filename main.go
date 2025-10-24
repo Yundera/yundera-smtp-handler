@@ -16,7 +16,8 @@ var (
 )
 
 func main() {
-	versionFlag := flag.Bool("v", flag.Bool("version", false, "show version")(), "show version")
+	versionFlag := flag.Bool("version", false, "show version")
+	flag.BoolVar(versionFlag, "v", false, "show version")
 	flag.Parse()
 
 	if *versionFlag {
