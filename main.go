@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
@@ -39,8 +40,11 @@ func main() {
 
 	orchestratorURL := os.Getenv("ORCHESTRATOR_URL")
 	if orchestratorURL == "" {
-		orchestratorURL = "https://nasselle.com/service/pcs"
+		orchestratorURL = "https://app.yundera.com/service/pcs"
 		log.Printf("⚠ ORCHESTRATOR_URL not set, using default: %s", orchestratorURL)
+	} else {
+		// Strip /user suffix if present (YUNDERA_USER_API includes it)
+		orchestratorURL = strings.TrimSuffix(orchestratorURL, "/user")
 	}
 
 	userJWT := os.Getenv("USER_JWT")
