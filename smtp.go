@@ -24,13 +24,22 @@ const (
 	MaxEmailSize = 10 * 1024 * 1024 // 10MB
 )
 
+// EmailAttachment represents an inline or file attachment
+type EmailAttachment struct {
+	Filename  string `json:"filename"`
+	Content   string `json:"content"`               // base64 encoded
+	MimeType  string `json:"type"`                  // e.g., "image/png", "image/svg+xml"
+	ContentID string `json:"content_id,omitempty"` // for inline images (cid: references)
+}
+
 // EmailRequest represents the request to Yundera email API
 type EmailRequest struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Text    string `json:"text"`
-	HTML    string `json:"html,omitempty"`
-	AppName string `json:"appName"`
+	To          string            `json:"to"`
+	Subject     string            `json:"subject"`
+	Text        string            `json:"text"`
+	HTML        string            `json:"html,omitempty"`
+	AppName     string            `json:"appName"`
+	Attachments []EmailAttachment `json:"attachments,omitempty"`
 }
 
 // SMTPBackend implements SMTP server backend
@@ -101,8 +110,8 @@ func (s *SMTPSession) Data(r io.Reader) error {
 		return err
 	}
 
-	// Parse email
-	subject, text, html := parseEmail(string(data))
+	// Parse email (now includes attachments)
+	subject, text, html, attachments := parseEmail(string(data))
 
 	// Get first recipient
 	if len(s.to) == 0 {
@@ -125,10 +134,10 @@ func (s *SMTPSession) Data(r io.Reader) error {
 		appName = "app"
 	}
 
-	log.Printf("Processing email from app '%s' to %s", appName, recipientEmail)
+	log.Printf("Processing email from app '%s' to %s (attachments: %d)", appName, recipientEmail, len(attachments))
 
 	// Forward to Yundera Email API
-	err = s.forwardToAPI(recipientEmail, subject, text, html, appName)
+	err = s.forwardToAPI(recipientEmail, subject, text, html, appName, attachments)
 	if err != nil {
 		log.Printf("Failed to forward email to API: %v", err)
 		return err
@@ -150,14 +159,15 @@ func (s *SMTPSession) Logout() error {
 }
 
 // forwardToAPI sends the email to Yundera Email API via HTTP
-func (s *SMTPSession) forwardToAPI(recipientEmail, subject, text, html, appName string) error {
+func (s *SMTPSession) forwardToAPI(recipientEmail, subject, text, html, appName string, attachments []EmailAttachment) error {
 	// Create email request
 	emailReq := EmailRequest{
-		To:      recipientEmail,
-		Subject: subject,
-		Text:    text,
-		HTML:    html,
-		AppName: appName,
+		To:          recipientEmail,
+		Subject:     subject,
+		Text:        text,
+		HTML:        html,
+		AppName:     appName,
+		Attachments: attachments,
 	}
 
 	// Marshal to JSON
@@ -212,13 +222,13 @@ func sanitizeAppName(name string) string {
 	return name
 }
 
-// parseEmail extracts subject, text, and HTML from email data using go-message library
-func parseEmail(data string) (subject, text, html string) {
+// parseEmail extracts subject, text, HTML, and attachments from email data using go-message library
+func parseEmail(data string) (subject, text, html string, attachments []EmailAttachment) {
 	reader := strings.NewReader(data)
 	entity, err := message.Read(reader)
 	if err != nil {
 		log.Printf("Failed to parse email: %v", err)
-		return "No Subject", data, ""
+		return "No Subject", data, "", nil
 	}
 
 	header := entity.Header
@@ -228,29 +238,27 @@ func parseEmail(data string) (subject, text, html string) {
 		subject = "No Subject"
 	}
 
-	text, html = extractBodyParts(entity)
+	text, html, attachments = extractBodyParts(entity)
 
 	if text == "" && html != "" {
 		text = html
 	}
 
-	return subject, strings.TrimSpace(text), strings.TrimSpace(html)
+	return subject, strings.TrimSpace(text), strings.TrimSpace(html), attachments
 }
 
-// extractBodyParts recursively extracts text and HTML parts from a MIME message
-func extractBodyParts(entity *message.Entity) (text, html string) {
+// extractBodyParts recursively extracts text, HTML, and attachments from a MIME message
+func extractBodyParts(entity *message.Entity) (text, html string, attachments []EmailAttachment) {
 	mediaType, params, err := entity.Header.ContentType()
 	if err != nil {
 		body, _ := io.ReadAll(entity.Body)
-		return string(body), ""
+		return string(body), "", nil
 	}
-
-	inlineImages := make(map[string]string)
 
 	if strings.HasPrefix(mediaType, "multipart/") {
 		mr := entity.MultipartReader()
 		if mr == nil {
-			return "", ""
+			return "", "", nil
 		}
 
 		for {
@@ -267,21 +275,39 @@ func extractBodyParts(entity *message.Entity) (text, html string) {
 			contentID := part.Header.Get("Content-Id")
 			contentDisposition := part.Header.Get("Content-Disposition")
 
+			// Extract inline images as attachments (preserve Content-ID for SendGrid)
 			if strings.HasPrefix(partMediaType, "image/") && contentID != "" {
 				contentID = strings.Trim(contentID, "<>")
 				body, err := io.ReadAll(part.Body)
 				if err == nil {
-					dataURI := fmt.Sprintf("data:%s;base64,%s", partMediaType, base64.StdEncoding.EncodeToString(body))
-					inlineImages[contentID] = dataURI
+					// Extract filename from Content-Disposition or use Content-ID
+					filename := contentID
+					if contentDisposition != "" {
+						// Try to extract filename from Content-Disposition
+						filenameRegex := regexp.MustCompile(`filename="?([^";\s]+)"?`)
+						if matches := filenameRegex.FindStringSubmatch(contentDisposition); len(matches) > 1 {
+							filename = matches[1]
+						}
+					}
+
+					attachments = append(attachments, EmailAttachment{
+						Filename:  filename,
+						Content:   base64.StdEncoding.EncodeToString(body),
+						MimeType:  partMediaType,
+						ContentID: contentID,
+					})
+					log.Printf("Extracted inline image attachment: %s (Content-ID: %s)", filename, contentID)
 				}
 			} else if contentDisposition == "" || !strings.HasPrefix(contentDisposition, "attachment") {
-				partText, partHTML := extractBodyParts(part)
+				// Recursively extract text/html from nested parts
+				partText, partHTML, partAttachments := extractBodyParts(part)
 				if partText != "" && text == "" {
 					text = partText
 				}
 				if partHTML != "" {
 					html = partHTML
 				}
+				attachments = append(attachments, partAttachments...)
 			}
 		}
 	} else if mediaType == "text/plain" {
@@ -305,13 +331,7 @@ func extractBodyParts(entity *message.Entity) (text, html string) {
 		}
 	}
 
-	if html != "" && len(inlineImages) > 0 {
-		for contentID, dataURI := range inlineImages {
-			html = strings.ReplaceAll(html, "cid:"+contentID, dataURI)
-		}
-	}
-
-	return text, html
+	return text, html, attachments
 }
 
 // StartSMTPServer starts the SMTP server
