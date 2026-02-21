@@ -119,16 +119,16 @@ func (s *SMTPSession) Data(r io.Reader) error {
 	}
 	recipientEmail := s.to[0]
 
-	// Determine app name from authentication or sender
-	appName := s.appName
-	if appName == "" {
-		// Try to extract app name from sender address
-		if s.from != "" {
-			parts := strings.Split(s.from, "@")
-			if len(parts) > 0 {
-				appName = sanitizeAppName(parts[0])
-			}
+	// Determine app name from sender address, fall back to auth username
+	var appName string
+	if s.from != "" {
+		parts := strings.Split(s.from, "@")
+		if len(parts) > 0 {
+			appName = sanitizeAppName(parts[0])
 		}
+	}
+	if appName == "" {
+		appName = s.appName
 	}
 	if appName == "" {
 		appName = "app"
