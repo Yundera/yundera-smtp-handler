@@ -34,9 +34,11 @@ SendGrid → Recipient
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `RELAY_ENDPOINT_URL` | Yes | - | Base URL of the relay backend's email API (gateway POSTs to `{url}/email/send`) |
-| `RELAY_CREDENTIAL` | Yes | - | Opaque bearer credential the relay verifies (a JWT on Yundera, a `userid:signature` on nsl) |
+| `RELAY_CREDENTIAL` | Yes | - | The credential the relay verifies. **Explicit mode:** an opaque bearer token (a JWT on Yundera). **Provider mode (nsl):** the PCS provider string `backend_url,userid,signature` — the gateway derives the endpoint and forwards `userid:signature`. |
+| `RELAY_ENDPOINT_URL` | Conditional | - | Base URL of the relay backend's email API (gateway POSTs to `{url}/email/send`). Required in explicit mode; **optional in provider mode**, where it defaults to `{backend_url}/router/api`. |
 | `SMTP_PORT` | No | `587` | SMTP listening port |
+
+> **Provider mode** is detected automatically: a `RELAY_CREDENTIAL` with exactly three comma-separated fields (`backend_url,userid,signature`) is treated as a provider string. A JWT contains no commas, so it always uses explicit mode.
 
 ### Docker Compose Example
 
