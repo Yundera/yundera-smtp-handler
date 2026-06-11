@@ -18,7 +18,7 @@ ARG BUILD_DATE=unknown
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
-    -o yundera-smtp-handler .
+    -o mail-gateway .
 
 # Final stage
 FROM alpine:latest
@@ -29,7 +29,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 
 # Copy the binary from builder
-COPY --from=builder /app/yundera-smtp-handler .
+COPY --from=builder /app/mail-gateway .
 
 # Create non-root user
 RUN addgroup -g 1000 smtp && \
@@ -41,4 +41,4 @@ USER smtp
 EXPOSE 587
 
 # Run the service
-CMD ["./yundera-smtp-handler"]
+CMD ["./mail-gateway"]

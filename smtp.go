@@ -32,7 +32,7 @@ type EmailAttachment struct {
 	ContentID string `json:"content_id,omitempty"` // for inline images (cid: references)
 }
 
-// EmailRequest represents the request to Yundera email API
+// EmailRequest represents the request to the relay email API
 type EmailRequest struct {
 	To          string            `json:"to"`
 	Subject     string            `json:"subject"`
@@ -44,8 +44,8 @@ type EmailRequest struct {
 
 // SMTPBackend implements SMTP server backend
 type SMTPBackend struct {
-	jwtToken        string
-	orchestratorURL string
+	relayCredential        string
+	relayEndpointURL string
 }
 
 // SMTPSession represents an SMTP session
@@ -58,10 +58,10 @@ type SMTPSession struct {
 }
 
 // NewSMTPBackend creates a new SMTP backend
-func NewSMTPBackend(orchestratorURL, jwtToken string) *SMTPBackend {
+func NewSMTPBackend(relayEndpointURL, relayCredential string) *SMTPBackend {
 	return &SMTPBackend{
-		orchestratorURL: orchestratorURL,
-		jwtToken:        jwtToken,
+		relayEndpointURL: relayEndpointURL,
+		relayCredential:        relayCredential,
 	}
 }
 
@@ -102,7 +102,7 @@ func (s *SMTPSession) Rcpt(to string, opts *smtp.RcptOptions) error {
 	return nil
 }
 
-// Data handles the email data and forwards to Yundera API
+// Data handles the email data and forwards to the relay API
 func (s *SMTPSession) Data(r io.Reader) error {
 	// Read email data
 	data, err := io.ReadAll(io.LimitReader(r, MaxEmailSize))
@@ -136,7 +136,7 @@ func (s *SMTPSession) Data(r io.Reader) error {
 
 	log.Printf("Processing email from app '%s' to %s (attachments: %d)", appName, recipientEmail, len(attachments))
 
-	// Forward to Yundera Email API
+	// Forward to relay email API
 	err = s.forwardToAPI(recipientEmail, subject, text, html, appName, attachments)
 	if err != nil {
 		log.Printf("Failed to forward email to API: %v", err)
@@ -158,7 +158,7 @@ func (s *SMTPSession) Logout() error {
 	return nil
 }
 
-// forwardToAPI sends the email to Yundera Email API via HTTP
+// forwardToAPI sends the email to the relay email API via HTTP
 func (s *SMTPSession) forwardToAPI(recipientEmail, subject, text, html, appName string, attachments []EmailAttachment) error {
 	// Create email request
 	emailReq := EmailRequest{
@@ -177,7 +177,7 @@ func (s *SMTPSession) forwardToAPI(recipientEmail, subject, text, html, appName 
 	}
 
 	// Create HTTP request
-	url := fmt.Sprintf("%s/email/send", s.backend.orchestratorURL)
+	url := fmt.Sprintf("%s/email/send", s.backend.relayEndpointURL)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create HTTP request: %w", err)
@@ -185,7 +185,7 @@ func (s *SMTPSession) forwardToAPI(recipientEmail, subject, text, html, appName 
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.backend.jwtToken))
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.backend.relayCredential))
 
 	// Send request
 	client := &http.Client{
@@ -335,24 +335,24 @@ func extractBodyParts(entity *message.Entity) (text, html string, attachments []
 }
 
 // StartSMTPServer starts the SMTP server
-func StartSMTPServer(port, orchestratorURL, jwtToken string) error {
+func StartSMTPServer(port, relayEndpointURL, relayCredential string) error {
 	if port == "" {
 		return errors.New("SMTP port is required")
 	}
 
-	if orchestratorURL == "" {
-		return errors.New("orchestrator URL is required")
+	if relayEndpointURL == "" {
+		return errors.New("relay endpoint URL is required")
 	}
 
-	if jwtToken == "" {
-		return errors.New("JWT token is required")
+	if relayCredential == "" {
+		return errors.New("relay credential is required")
 	}
 
-	backend := NewSMTPBackend(orchestratorURL, jwtToken)
+	backend := NewSMTPBackend(relayEndpointURL, relayCredential)
 
 	server := smtp.NewServer(backend)
 	server.Addr = ":" + port
-	server.Domain = "smtp.yundera.local"
+	server.Domain = "smtp.local"
 	server.AllowInsecureAuth = true // OK within private Docker network
 	server.MaxMessageBytes = MaxEmailSize
 	server.MaxRecipients = 50
@@ -373,7 +373,7 @@ func StartSMTPServer(port, orchestratorURL, jwtToken string) error {
 	}
 
 	log.Printf("✓ SMTP Server started on port %s", port)
-	log.Printf("✓ Forwarding emails to Yundera orchestrator at %s", orchestratorURL)
+	log.Printf("✓ Forwarding emails to relay backend at %s", relayEndpointURL)
 	log.Printf("✓ Ready to accept SMTP connections from apps")
 
 	// Start serving in a goroutine

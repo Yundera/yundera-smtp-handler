@@ -22,12 +22,12 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("yundera-smtp-handler %s (commit: %s, built: %s)\n", version, commit, date)
+		fmt.Printf("mail-gateway %s (commit: %s, built: %s)\n", version, commit, date)
 		os.Exit(0)
 	}
 
 	log.Println("=================================================")
-	log.Printf("Yundera SMTP Handler v%s", version)
+	log.Printf("Mail Gateway v%s", version)
 	log.Printf("Git Commit: %s", commit)
 	log.Printf("Build Date: %s", date)
 	log.Println("=================================================")
@@ -38,25 +38,27 @@ func main() {
 		smtpPort = "587"
 	}
 
-	orchestratorURL := os.Getenv("ORCHESTRATOR_URL")
-	if orchestratorURL == "" {
-		orchestratorURL = "https://app.yundera.com/service/pcs"
-		log.Printf("⚠ ORCHESTRATOR_URL not set, using default: %s", orchestratorURL)
-	} else {
-		// Strip /user suffix if present (YUNDERA_USER_API includes it)
-		orchestratorURL = strings.TrimSuffix(orchestratorURL, "/user")
+	// RELAY_ENDPOINT_URL is the base URL of the relay backend's email API.
+	relayEndpointURL := os.Getenv("RELAY_ENDPOINT_URL")
+	if relayEndpointURL == "" {
+		log.Fatal("❌ ERROR: RELAY_ENDPOINT_URL environment variable is required")
 	}
+	// Strip /user suffix if present (some deployments seed the user-API URL)
+	relayEndpointURL = strings.TrimSuffix(relayEndpointURL, "/user")
 
-	userJWT := os.Getenv("USER_JWT")
-	if userJWT == "" {
-		log.Fatal("❌ ERROR: USER_JWT environment variable is required")
+	// RELAY_CREDENTIAL is the opaque bearer credential the relay verifies — a JWT on
+	// Yundera, a userid:signature derived from the provider string on nsl. The gateway
+	// never parses it.
+	relayCredential := os.Getenv("RELAY_CREDENTIAL")
+	if relayCredential == "" {
+		log.Fatal("❌ ERROR: RELAY_CREDENTIAL environment variable is required")
 	}
 
 	// Start SMTP server
 	log.Printf("Starting SMTP server on port %s...", smtpPort)
-	log.Printf("Orchestrator URL: %s", orchestratorURL)
+	log.Printf("Relay endpoint URL: %s", relayEndpointURL)
 
-	if err := StartSMTPServer(smtpPort, orchestratorURL, userJWT); err != nil {
+	if err := StartSMTPServer(smtpPort, relayEndpointURL, relayCredential); err != nil {
 		log.Fatalf("❌ Failed to start SMTP server: %v", err)
 	}
 

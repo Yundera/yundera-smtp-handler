@@ -1,4 +1,4 @@
-module github.com/Yundera/yundera-smtp-handler
+module github.com/Yundera/mail-gateway
 
 go 1.21
 

@@ -1,6 +1,6 @@
-# Yundera SMTP Handler
+# Mail Gateway
 
-Standalone SMTP relay service for Yundera Personal Cloud Server (PCS) deployments. This service receives emails from containerized applications (Vaultwarden, Nextcloud, etc.) and forwards them to the Yundera orchestrator API for delivery via SendGrid.
+Standalone SMTP gateway for Personal Cloud Server (PCS) deployments. This service receives emails from containerized applications (Vaultwarden, Nextcloud, etc.) and forwards them over HTTPS to a relay backend (the orchestrator email API) for delivery via SendGrid.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ smtp container (this service)
      │
      │ HTTPS API call
      ↓
-Yundera Orchestrator
+Relay backend (orchestrator)
      │
      ↓
 SendGrid → Recipient
@@ -23,7 +23,7 @@ SendGrid → Recipient
 
 - **SMTP Relay**: Accepts SMTP connections on port 587
 - **Email Parsing**: Full RFC-compliant MIME email parsing with inline image support
-- **API Forwarding**: Forwards emails to Yundera orchestrator with JWT authentication
+- **API Forwarding**: Forwards emails to the relay backend with JWT authentication
 - **Network Isolation**: Runs in private Docker network (pcs)
 - **Multi-platform**: Supports linux/amd64 and linux/arm64
 - **Lightweight**: ~20MB Alpine-based Docker image
@@ -34,8 +34,8 @@ SendGrid → Recipient
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `USER_JWT` | Yes | - | JWT token for authenticating with Yundera orchestrator |
-| `ORCHESTRATOR_URL` | No | `https://nasselle.com/service/pcs` | Yundera orchestrator API endpoint |
+| `RELAY_ENDPOINT_URL` | Yes | - | Base URL of the relay backend's email API (gateway POSTs to `{url}/email/send`) |
+| `RELAY_CREDENTIAL` | Yes | - | Opaque bearer credential the relay verifies (a JWT on Yundera, a `userid:signature` on nsl) |
 | `SMTP_PORT` | No | `587` | SMTP listening port |
 
 ### Docker Compose Example
@@ -43,13 +43,13 @@ SendGrid → Recipient
 ```yaml
 services:
   smtp:
-    image: ghcr.io/yundera/yundera-smtp-handler:latest
+    image: ghcr.io/yundera/mail-gateway:latest
     container_name: smtp
     hostname: smtp
     restart: unless-stopped
     environment:
-      USER_JWT: "${USER_JWT}"
-      ORCHESTRATOR_URL: "https://orchestrator.yundera.com"
+      RELAY_CREDENTIAL: "${RELAY_CREDENTIAL}"
+      RELAY_ENDPOINT_URL: "${RELAY_ENDPOINT_URL}"
       SMTP_PORT: "587"
     expose:
       - "587"
@@ -93,17 +93,17 @@ In Nextcloud admin settings:
 ### Build Locally
 
 ```bash
-docker build -t yundera-smtp-handler .
+docker build -t mail-gateway .
 ```
 
 ### Run Locally
 
 ```bash
 docker run --rm \
-  -e USER_JWT="your-jwt-token" \
-  -e ORCHESTRATOR_URL="https://nasselle.com/service/pcs" \
+  -e RELAY_CREDENTIAL="your-credential" \
+  -e RELAY_ENDPOINT_URL="https://your-relay.example.com/service/pcs" \
   -p 587:587 \
-  yundera-smtp-handler
+  mail-gateway
 ```
 
 ### Test Email
@@ -124,7 +124,7 @@ telnet localhost 587
 
 ## Deployment
 
-This service is automatically deployed to Yundera PCS instances via the `compose-template.yml` in the settings-center-app package.
+This service is automatically deployed to PCS instances via the `docker-compose.yml` template shipped with the mesh-router installer.
 
 ### GitHub Actions
 
@@ -142,7 +142,7 @@ docker logs smtp
 ```
 
 Common issues:
-- Missing `USER_JWT` environment variable
+- Missing `RELAY_CREDENTIAL` environment variable
 - Port 587 already in use
 - Network connectivity to orchestrator
 
